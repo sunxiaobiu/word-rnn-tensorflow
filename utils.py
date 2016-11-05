@@ -5,6 +5,7 @@ from six.moves import cPickle
 import numpy as np
 import re
 import itertools
+from tensorflow.python.lib.io import file_io
 
 class TextLoader():
     def __init__(self, data_dir, batch_size, seq_length):
@@ -17,7 +18,7 @@ class TextLoader():
         tensor_file = os.path.join(data_dir, "data.npy")
 
         # Let's not read voca and data from file. We many change them.
-        if True or not (os.path.exists(vocab_file) and os.path.exists(tensor_file)):
+        if True or not (file_io.file_exists(vocab_file) and file_io.file_exists(tensor_file)):
             print("reading text file")
             self.preprocess(input_file, vocab_file, tensor_file)
         else:
@@ -62,8 +63,7 @@ class TextLoader():
         return [vocabulary, vocabulary_inv]
 
     def preprocess(self, input_file, vocab_file, tensor_file):
-        with open(input_file, "r") as f:
-            data = f.read()
+        data = file_io.read_file_to_string('gs://your-bucket-path/input_file')
 
         # Optional text cleaning or make them lower case, etc.
         #data = self.clean_str(data)
@@ -72,8 +72,8 @@ class TextLoader():
         self.vocab, self.words = self.build_vocab(x_text)
         self.vocab_size = len(self.words)
 
-        with open(vocab_file, 'wb') as f:
-            cPickle.dump(self.words, f)
+        vocab_file_f = file_io.write_string_to_file('gs://your-bucket-path/vocab_file')
+        cPickle.dump(self.words, vocab_file_f)
 
         #The same operation like this [self.vocab[word] for word in x_text]
         # index of words as our basic data
@@ -82,8 +82,8 @@ class TextLoader():
         np.save(tensor_file, self.tensor)
 
     def load_preprocessed(self, vocab_file, tensor_file):
-        with open(vocab_file, 'rb') as f:
-            self.words = cPickle.load(f)
+        self.words = cPickle.load(file_io.read_file_to_string('gs://your-bucket-path/vocab_file'))
+        
         self.vocab_size = len(self.words)
         self.vocab = dict(zip(self.words, range(len(self.words))))
         self.tensor = np.load(tensor_file)
