@@ -1,111 +1,115 @@
-from __future__ import print_function
-import numpy as np
-import tensorflow as tf
-
-import argparse
-import time
+# -*- coding: utf-8 -*-
 import os
+import collections
 from six.moves import cPickle
+import numpy as np
+import re
+import itertools
+from tensorflow.python.lib.io import file_io
 
-from utils import TextLoader
-from model import Model
+class TextLoader():
+    def __init__(self, data_dir, batch_size, seq_length):
+        self.data_dir = data_dir
+        self.batch_size = batch_size
+        self.seq_length = seq_length
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--data_dir', type=str, default='data/tinyshakespeare',
-                       help='data directory containing input.txt')
-    parser.add_argument('--save_dir', type=str, default='save',
-                       help='directory to store checkpointed models')
-    parser.add_argument('--rnn_size', type=int, default=256,
-                       help='size of RNN hidden state')
-    parser.add_argument('--num_layers', type=int, default=2,
-                       help='number of layers in the RNN')
-    parser.add_argument('--model', type=str, default='lstm',
-                       help='rnn, gru, or lstm')
-    parser.add_argument('--batch_size', type=int, default=50,
-                       help='minibatch size')
-    parser.add_argument('--seq_length', type=int, default=25,
-                       help='RNN sequence length')
-    parser.add_argument('--num_epochs', type=int, default=50,
-                       help='number of epochs')
-    parser.add_argument('--save_every', type=int, default=1000,
-                       help='save frequency')
-    parser.add_argument('--grad_clip', type=float, default=5.,
-                       help='clip gradients at this value')
-    parser.add_argument('--learning_rate', type=float, default=0.002,
-                       help='learning rate')
-    parser.add_argument('--decay_rate', type=float, default=0.97,
-                       help='decay rate for rmsprop')
-    parser.add_argument('--init_from', type=str, default=None,
-                       help="""continue training from saved model at this path. Path must contain files saved by previous training process:
-                            'config.pkl'        : configuration;
-                            'words_vocab.pkl'   : vocabulary definitions;
-                            'checkpoint'        : paths to model file(s) (created by tf).
-                                                  Note: this file contains absolute paths, be careful when moving files around;
-                            'model.ckpt-*'      : file(s) with model definition (created by tf)
-                        """)
-    args = parser.parse_args()
-    train(args)
+        input_file = os.path.join(data_dir, "input.txt")
+        vocab_file = os.path.join(data_dir, "vocab.pkl")
+        tensor_file = os.path.join(data_dir, "data.npy")
 
-def train(args):
-    data_loader = TextLoader(args.data_dir, args.batch_size, args.seq_length)
-    args.vocab_size = data_loader.vocab_size
+        # Let's not read voca and data from file. We many change them.
+        if True or not (file_io.file_exists(vocab_file) and file_io.file_exists(tensor_file)):
+            print("reading text file")
+            self.preprocess(input_file, vocab_file, tensor_file)
+        else:
+            print("loading preprocessed files")
+            self.load_preprocessed(vocab_file, tensor_file)
+        self.create_batches()
+        self.reset_batch_pointer()
 
-    # check compatibility if training is continued from previously saved model
-    if args.init_from is not None:
-        # check if all necessary files exist
-        assert os.path.isdir(args.init_from)," %s must be a a path" % args.init_from
-        assert os.path.isfile(os.path.join(args.init_from,"config.pkl")),"config.pkl file does not exist in path %s"%args.init_from
-        assert os.path.isfile(os.path.join(args.init_from,"words_vocab.pkl")),"words_vocab.pkl.pkl file does not exist in path %s" % args.init_from
-        ckpt = tf.train.get_checkpoint_state(args.init_from)
-        assert ckpt,"No checkpoint found"
-        assert ckpt.model_checkpoint_path,"No model path found in checkpoint"
+    def clean_str(self, string):
+        """
+        Tokenization/string cleaning for all datasets except for SST.
+        Original taken from https://github.com/yoonkim/CNN_sentence/blob/master/process_data
+        """
+        string = re.sub(r"[^가-힣A-Za-z0-9(),!?\'\`]", " ", string)
+        string = re.sub(r"\'s", " \'s", string)
+        string = re.sub(r"\'ve", " \'ve", string)
+        string = re.sub(r"n\'t", " n\'t", string)
+        string = re.sub(r"\'re", " \'re", string)
+        string = re.sub(r"\'d", " \'d", string)
+        string = re.sub(r"\'ll", " \'ll", string)
+        string = re.sub(r",", " , ", string)
+        string = re.sub(r"!", " ! ", string)
+        string = re.sub(r"\(", " \( ", string)
+        string = re.sub(r"\)", " \) ", string)
+        string = re.sub(r"\?", " \? ", string)
+        string = re.sub(r"\s{2,}", " ", string)
+        return string.strip().lower()
 
-        # open old config and check if models are compatible
-        with open(os.path.join(args.init_from, 'config.pkl'), 'rb') as f:
-            saved_model_args = cPickle.load(f)
-        need_be_same=["model","rnn_size","num_layers","seq_length"]
-        for checkme in need_be_same:
-            assert vars(saved_model_args)[checkme]==vars(args)[checkme],"Command line argument and saved model disagree on '%s' "%checkme
 
-        # open saved vocab/dict and check if vocabs/dicts are compatible
-        with open(os.path.join(args.init_from, 'words_vocab.pkl'), 'rb') as f:
-            saved_words, saved_vocab = cPickle.load(f)
-        assert saved_words==data_loader.words, "Data and loaded model disagreee on word set!"
-        assert saved_vocab==data_loader.vocab, "Data and loaded model disagreee on dictionary mappings!"
+    def build_vocab(self, sentences):
+        """
+        Builds a vocabulary mapping from word to index based on the sentences.
+        Returns vocabulary mapping and inverse vocabulary mapping.
+        """
+        # Build vocabulary_in
+        word_counts = collections.Counter(sentences)
+        # Mapping from index to word
+        vocabulary_inv = [x[0] for x in word_counts.most_common()]
+        vocabulary_inv = list(sorted(vocabulary_inv))
+        # Mapping from word to index
+        vocabulary = {x: i for i, x in enumerate(vocabulary_inv)}
+        return [vocabulary, vocabulary_inv]
 
-    with open(os.path.join(args.save_dir, 'config.pkl'), 'wb') as f:
-        cPickle.dump(args, f)
-    with open(os.path.join(args.save_dir, 'words_vocab.pkl'), 'wb') as f:
-        cPickle.dump((data_loader.words, data_loader.vocab), f)
+    def preprocess(self, input_file, vocab_file, tensor_file):
+        data = file_io.read_file_to_string('gs://your-bucket-path/input_file')
 
-    model = Model(args)
+        # Optional text cleaning or make them lower case, etc.
+        #data = self.clean_str(data)
+        x_text = data.split()
 
-    with tf.Session() as sess:
-        tf.initialize_all_variables().run()
-        saver = tf.train.Saver(tf.all_variables())
-        # restore model
-        if args.init_from is not None:
-            saver.restore(sess, ckpt.model_checkpoint_path)
-        for e in range(args.num_epochs):
-            sess.run(tf.assign(model.lr, args.learning_rate * (args.decay_rate ** e)))
-            data_loader.reset_batch_pointer()
-            state = sess.run(model.initial_state)
-            for b in range(data_loader.num_batches):
-                start = time.time()
-                x, y = data_loader.next_batch()
-                feed = {model.input_data: x, model.targets: y, model.initial_state: state}
-                train_loss, state, _ = sess.run([model.cost, model.final_state, model.train_op], feed)
-                end = time.time()
-                print("{}/{} (epoch {}), train_loss = {:.3f}, time/batch = {:.3f}" \
-                    .format(e * data_loader.num_batches + b,
-                            args.num_epochs * data_loader.num_batches,
-                            e, train_loss, end - start))
-                if (e * data_loader.num_batches + b) % args.save_every == 0 \
-                        or (e==args.num_epochs-1 and b == data_loader.num_batches-1): # save for the last result
-                    checkpoint_path = os.path.join(args.save_dir, 'model.ckpt')
-                    saver.save(sess, checkpoint_path, global_step = e * data_loader.num_batches + b)
-                    print("model saved to {}".format(checkpoint_path))
+        self.vocab, self.words = self.build_vocab(x_text)
+        self.vocab_size = len(self.words)
 
-if __name__ == '__main__':
-    main()
+        vocab_file_f = file_io.write_string_to_file('gs://your-bucket-path/vocab_file')
+        cPickle.dump(self.words, vocab_file_f)
+
+        #The same operation like this [self.vocab[word] for word in x_text]
+        # index of words as our basic data
+        self.tensor = np.array(list(map(self.vocab.get, x_text)))
+        # Save the data to data.npy
+        np.save(tensor_file, self.tensor)
+
+    def load_preprocessed(self, vocab_file, tensor_file):
+        self.words = cPickle.load(file_io.read_file_to_string('gs://your-bucket-path/vocab_file'))
+       
+        self.vocab_size = len(self.words)
+        self.vocab = dict(zip(self.words, range(len(self.words))))
+        self.tensor = np.load(tensor_file)
+        self.num_batches = int(self.tensor.size / (self.batch_size *
+                                                   self.seq_length))
+
+    def create_batches(self):
+        self.num_batches = int(self.tensor.size / (self.batch_size *
+                                                   self.seq_length))
+        if self.num_batches==0:
+            assert False, "Not enough data. Make seq_length and batch_size small."
+
+        self.tensor = self.tensor[:self.num_batches * self.batch_size * self.seq_length]
+        xdata = self.tensor
+        ydata = np.copy(self.tensor)
+
+        ydata[:-1] = xdata[1:]
+        ydata[-1] = xdata[0]
+        self.x_batches = np.split(xdata.reshape(self.batch_size, -1), self.num_batches, 1)
+        self.y_batches = np.split(ydata.reshape(self.batch_size, -1), self.num_batches, 1)
+
+
+    def next_batch(self):
+        x, y = self.x_batches[self.pointer], self.y_batches[self.pointer]
+        self.pointer += 1
+        return x, y
+
+    def reset_batch_pointer(self):
+        self.pointer = 0
