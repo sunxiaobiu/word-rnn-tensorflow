@@ -9,6 +9,7 @@ from six.moves import cPickle
 
 from utils import TextLoader
 from model import Model
+from gcutils import GoogleCloudService
 
 def main():
     parser = argparse.ArgumentParser()
@@ -62,22 +63,28 @@ def train(args):
         assert ckpt.model_checkpoint_path,"No model path found in checkpoint"
 
         # open old config and check if models are compatible
-        with open(os.path.join(args.init_from, 'config.pkl'), 'rb') as f:
-            saved_model_args = cPickle.load(f)
+        # with open(os.path.join(args.init_from, 'config.pkl'), 'rb') as f:
+        #     saved_model_args = cPickle.load(f)
+        config_text = GoogleCloudService(args.save_dir+"/").download_file_google_cloud("config.pkl")
+        saved_model_args = cPickle.load(config_text)
         need_be_same=["model","rnn_size","num_layers","seq_length"]
         for checkme in need_be_same:
             assert vars(saved_model_args)[checkme]==vars(args)[checkme],"Command line argument and saved model disagree on '%s' "%checkme
 
         # open saved vocab/dict and check if vocabs/dicts are compatible
-        with open(os.path.join(args.init_from, 'words_vocab.pkl'), 'rb') as f:
-            saved_words, saved_vocab = cPickle.load(f)
+        words_vocab_text = GoogleCloudService(args.save_dir+"/").download_file_google_cloud("words_vocab.pkl")
+        saved_words, saved_vocab = cPickle.load(words_vocab_text)
+        # with open(os.path.join(args.init_from, 'words_vocab.pkl'), 'rb') as f:
+        #     saved_words, saved_vocab = cPickle.load(f)
         assert saved_words==data_loader.words, "Data and loaded model disagreee on word set!"
         assert saved_vocab==data_loader.vocab, "Data and loaded model disagreee on dictionary mappings!"
 
     with open(os.path.join(args.save_dir, 'config.pkl'), 'wb') as f:
         cPickle.dump(args, f)
+    GoogleCloudService(args.save_dir+"/").upload_file_google_cloud('config.pkl', args);
     with open(os.path.join(args.save_dir, 'words_vocab.pkl'), 'wb') as f:
         cPickle.dump((data_loader.words, data_loader.vocab), f)
+    GoogleCloudService(args.save_dir+"/").upload_file_google_cloud('words_vocab.pkl', (data_loader.words, data_loader.vocab));
 
     model = Model(args)
 

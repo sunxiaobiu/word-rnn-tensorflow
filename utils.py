@@ -5,7 +5,7 @@ from six.moves import cPickle
 import numpy as np
 import re
 import itertools
-from tensorflow.python.lib.io import file_io
+from gcutils import GoogleCloudService
 
 class TextLoader():
     def __init__(self, data_dir, batch_size, seq_length):
@@ -18,7 +18,7 @@ class TextLoader():
         tensor_file = os.path.join(data_dir, "data.npy")
 
         # Let's not read voca and data from file. We many change them.
-        if True or not (file_io.file_exists(vocab_file) and file_io.file_exists(tensor_file)):
+        if True or not (os.path.exists(vocab_file) and os.path.exists(tensor_file)):
             print("reading text file")
             self.preprocess(input_file, vocab_file, tensor_file)
         else:
@@ -53,6 +53,7 @@ class TextLoader():
         Builds a vocabulary mapping from word to index based on the sentences.
         Returns vocabulary mapping and inverse vocabulary mapping.
         """
+        
         # Build vocabulary
         word_counts = collections.Counter(sentences)
         # Mapping from index to word
@@ -63,26 +64,23 @@ class TextLoader():
         return [vocabulary, vocabulary_inv]
 
     def preprocess(self, input_file, vocab_file, tensor_file):
-        data = file_io.read_file_to_string('gs://your-bucket-path/input_file')
+        x_text = GoogleCloudService(self.data_dir).download_file_google_cloud("input.txt")
+        #x_text = self.download_file_google_cloud("input.txt")
 
-        # Optional text cleaning or make them lower case, etc.
-        #data = self.clean_str(data)
-        x_text = data.split()
-
-        self.vocab, self.words = self.build_vocab(x_text)
+        data = x_text.split()
+        self.vocab, self.words = self.build_vocab(data)
         self.vocab_size = len(self.words)
-
-        vocab_file_f = file_io.write_string_to_file('gs://your-bucket-path/vocab_file')
-        cPickle.dump(self.words, vocab_file_f)
 
         #The same operation like this [self.vocab[word] for word in x_text]
         # index of words as our basic data
-        self.tensor = np.array(list(map(self.vocab.get, x_text)))
+        self.tensor = np.array(list(map(self.vocab.get, data)))
         # Save the data to data.npy
         np.save(tensor_file, self.tensor)
+        GoogleCloudService(self.data_dir).upload_file_google_cloud("vocab.pkl", self.words)
 
     def load_preprocessed(self, vocab_file, tensor_file):
-        self.words = cPickle.load(file_io.read_file_to_string('gs://your-bucket-path/vocab_file'))
+        vocab_file = GoogleCloudService(self.data_dir).download_file_google_cloud("vocab.pkl")
+        self.words = cPickle.load(vocab_file)
         
         self.vocab_size = len(self.words)
         self.vocab = dict(zip(self.words, range(len(self.words))))
@@ -113,3 +111,5 @@ class TextLoader():
 
     def reset_batch_pointer(self):
         self.pointer = 0
+
+   
