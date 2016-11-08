@@ -9,7 +9,7 @@ from six.moves import cPickle
 class GoogleCloudService():
 	def __init__(self, data_dir):
 		self.data_dir = data_dir
-		self.GOOGLE_STORAGE = 'console.cloud.google.com/storage/browser'
+		self.GOOGLE_STORAGE = 'gs'
 		self.TENSORFLOW_BUCKET = 'rnn-tensorflow'
 		self.CLIENT_ID = '857458742632-lrt61p69cvb8bc4sa5lv3k8adterfc3t.apps.googleusercontent.com'
 		self.CLIENT_SECRET = 'f58f6QWrjj1qqTZjIrFR5Fna'
