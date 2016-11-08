@@ -18,6 +18,7 @@ install:
 
 install:
   - pip install boto;
+  - pip install gcs_oauth2_boto_plugin;
 
 # command to run tests
 script:
