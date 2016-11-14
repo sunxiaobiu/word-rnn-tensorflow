@@ -3,6 +3,7 @@ from tensorflow.python.ops import rnn_cell
 from tensorflow.python.ops import seq2seq
 import random
 import numpy as np
+from beam import BeamSearch
 
 class Model():
     def __init__(self, args, infer=False):
@@ -71,8 +72,11 @@ class Model():
             [state] = sess.run([self.final_state], feed)
          
         def weighted_pick(weights):
-            t = np.cumsum(weights)
-            s = np.sum(weights)
+            probs[0] = weights
+            samples, scores = BeamSearch(probs).beamsearch(None, vocab.get(prime), None, 2, len(weights), False)
+            sampleweights = samples[np.argmax(scores)]
+            t = np.cumsum(sampleweights)
+            s = np.sum(sampleweights)
             return(int(np.searchsorted(t, np.random.rand(1)*s)))
 
         ret = prime
